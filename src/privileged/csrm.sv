@@ -88,6 +88,7 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
   // .. up to 15 more at consecutive addresses
   localparam PMPADDR0      = 12'h3B0;
   // ... up to 63 more at consecutive addresses
+  /* verilator lint_off UNUSEDPARAM */
   localparam TSELECT       = 12'h7A0;
   localparam TDATA1        = 12'h7A1;
   localparam TDATA2        = 12'h7A2;
@@ -96,6 +97,7 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
   localparam DPC           = 12'h7B1;
   localparam DSCRATCH0     = 12'h7B2;
   localparam DSCRATCH1     = 12'h7B3;
+  /* verilator lint_off UNUSEDPARAM */
   // Constants
   localparam ZERO = {(P.XLEN){1'b0}};
   // when compressed instructions are supported, there can't be misaligned instructions
@@ -119,7 +121,7 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
         assign ADDRLocked[i] = PMPCFG_ARRAY_REGW[i][7];
       else
         assign ADDRLocked[i] = PMPCFG_ARRAY_REGW[i][7] | (PMPCFG_ARRAY_REGW[i+1][7] & PMPCFG_ARRAY_REGW[i+1][4:3] == 2'b01);
-      
+
       assign WritePMPADDRM[i] = (CSRMWriteM & (CSRAdrM == (PMPADDR0+i))) & ~ADDRLocked[i];
       flopenr #(P.PA_BITS-2) PMPADDRreg(clk, reset, WritePMPADDRM[i], CSRWriteValM[P.PA_BITS-3:0], PMPADDR_ARRAY_REGW[i]);
       if (P.XLEN==64) begin
@@ -132,7 +134,7 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
 
       assign CSRPMPWRLegalizedWriteValM[i] = {(CSRPMPWriteValM[i][1] & CSRPMPWriteValM[i][0]), CSRPMPWriteValM[i][0]}; // legalize WR fields (reserved 10 written as 00)
       assign CSRPMPLegalizedWriteValM[i] = {CSRPMPWriteValM[i][7], 2'b00, CSRPMPWriteValM[i][4:2], CSRPMPWRLegalizedWriteValM[i]};
-      flopenr #(8) PMPCFGreg(clk, reset, WritePMPCFGM[i], CSRPMPWriteValM[i], PMPCFG_ARRAY_REGW[i]);
+      flopenr #(8) PMPCFGreg(clk, reset, WritePMPCFGM[i], CSRPMPLegalizedWriteValM[i], PMPCFG_ARRAY_REGW[i]);
     end
   end
 

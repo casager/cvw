@@ -33,12 +33,6 @@
     `include "idv/idv.svh"
 `endif
 
-`ifdef RVVI_COVERAGE
-    `include "RISCV_trace_data.svh"
-    `include "rvvicov.svh"
-    `include "wrapper.sv"
-`endif
-
 import cvw::*;
 
 module testbench;
@@ -50,6 +44,15 @@ module testbench;
   parameter I_CACHE_ADDR_LOGGER=0;
   parameter D_CACHE_ADDR_LOGGER=0;
   parameter RVVI_SYNTH_SUPPORTED=0;
+  parameter MAKE_VCD=0;
+
+  // TREK Requires a license for the Breker tool. See tests/breker/README.md for details
+  `ifdef USE_TREK_DV
+    event trek_start;
+    always @(testbench.trek_start) begin
+      trek_uvm_pkg::trek_uvm_events::do_backdoor_init();
+    end
+  `endif
 
   `ifdef USE_IMPERAS_DV
     import idvPkg::*;
@@ -142,7 +145,9 @@ module testbench;
         "arch64i":                                tests = arch64i;
         "arch64priv":                             tests = arch64priv;
         "arch64c":      if (P.ZCA_SUPPORTED)
-                          if (P.ZICSR_SUPPORTED)  tests = {arch64c, arch64cpriv};
+                          if (P.ZICSR_SUPPORTED)  
+                            if (P.ZCD_SUPPORTED)  tests = {arch64c, arch64cpriv, arch64zcd};
+                            else                  tests = {arch64c, arch64cpriv};
                           else                    tests = {arch64c};
         "arch64m":      if (P.M_SUPPORTED)        tests = arch64m;
         "arch64a_amo":      if (P.ZAAMO_SUPPORTED)        tests = arch64a_amo;
@@ -169,7 +174,9 @@ module testbench;
         "arch64zbs":     if (P.ZBS_SUPPORTED)     tests = arch64zbs;
         "arch64zicboz":  if (P.ZICBOZ_SUPPORTED)  tests = arch64zicboz;
         "arch64zcb":     if (P.ZCB_SUPPORTED)     tests = arch64zcb;
-        "arch64zfh":     if (P.ZFH_SUPPORTED)     tests = arch64zfh;
+        "arch64zfh":     if (P.ZFH_SUPPORTED)     
+                           if (P.D_SUPPORTED)     tests = {arch64zfh, arch64zfh_d};
+                           else                   tests = arch64zfh;
         "arch64zfh_fma": if (P.ZFH_SUPPORTED)     tests = arch64zfh_fma;
         "arch64zfh_divsqrt":     if (P.ZFH_SUPPORTED)     tests = arch64zfh_divsqrt;
         "arch64zfaf":    if (P.ZFA_SUPPORTED)     tests = arch64zfaf;
@@ -181,6 +188,7 @@ module testbench;
         "arch64zknd":    if (P.ZKND_SUPPORTED)    tests = arch64zknd;
         "arch64zkne":    if (P.ZKNE_SUPPORTED)    tests = arch64zkne;
         "arch64zknh":    if (P.ZKNH_SUPPORTED)    tests = arch64zknh;
+        "arch64pmp":     if (P.PMP_ENTRIES > 0)   tests = arch64pmp;
       endcase
     end else begin // RV32
       case (TEST)
@@ -188,7 +196,11 @@ module testbench;
         "arch32i":                                tests = arch32i;
         "arch32priv":                             tests = arch32priv;
         "arch32c":      if (P.C_SUPPORTED)
-                          if (P.ZICSR_SUPPORTED)  tests = {arch32c, arch32cpriv};
+                          if (P.ZICSR_SUPPORTED)  
+                            if (P.ZCF_SUPPORTED)  
+                              if (P.ZCD_SUPPORTED)  tests = {arch32c, arch32cpriv, arch32zcf, arch32zcd};
+                              else                tests = {arch32c, arch32cpriv, arch32zcf};
+                            else                  tests = {arch32c, arch32cpriv};
                           else                    tests = {arch32c};
         "arch32m":      if (P.M_SUPPORTED)        tests = arch32m;
         "arch32a_amo":      if (P.ZAAMO_SUPPORTED)  tests = arch32a_amo;
@@ -212,7 +224,9 @@ module testbench;
         "arch32zbs":     if (P.ZBS_SUPPORTED)     tests = arch32zbs;
         "arch32zicboz":  if (P.ZICBOZ_SUPPORTED)  tests = arch32zicboz;
         "arch32zcb":     if (P.ZCB_SUPPORTED)     tests = arch32zcb;
-        "arch32zfh":     if (P.ZFH_SUPPORTED)     tests = arch32zfh;
+        "arch32zfh":     if (P.ZFH_SUPPORTED)     
+                           if (P.D_SUPPORTED)     tests = {arch32zfh, arch32zfh_d};
+                           else                   tests = arch32zfh;
         "arch32zfh_fma": if (P.ZFH_SUPPORTED)     tests = arch32zfh_fma;
         "arch32zfh_divsqrt":     if (P.ZFH_SUPPORTED)     tests = arch32zfh_divsqrt;
         "arch32zfaf":    if (P.ZFA_SUPPORTED)     tests = arch32zfaf;
@@ -223,6 +237,8 @@ module testbench;
         "arch32zknd":    if (P.ZKND_SUPPORTED)    tests = arch32zknd;
         "arch32zkne":    if (P.ZKNE_SUPPORTED)    tests = arch32zkne;
         "arch32zknh":    if (P.ZKNH_SUPPORTED)    tests = arch32zknh;
+        "arch32pmp":     if (P.PMP_ENTRIES > 0)   tests = arch32pmp;
+        "arch32vm_sv32": if (P.VIRTMEM_SUPPORTED) tests = arch32vm_sv32;
       endcase
     end
     if (tests.size() == 0 & ElfFile == "none") begin
@@ -233,10 +249,10 @@ module testbench;
       end
       $finish;
     end
-`ifdef MAKEVCD
-    $dumpfile("testbench.vcd");
-    $dumpvars;
-`endif
+    if (MAKE_VCD) begin
+      $dumpfile("testbench.vcd");
+      $dumpvars;
+    end
   end // initial begin
 
   // Model the testbench as an fsm.
@@ -414,7 +430,11 @@ module testbench;
       end else if (TEST == "coverage64gc") begin
         $display("%s ran. Coverage tests don't get checked", tests[test]);
       end else if (ElfFile != "none") begin
-        $display("Single Elf file tests are not signatured verified.");
+        `ifdef USE_TREK_DV
+          $display("Breker test is done.");
+        `else
+          $display("Single Elf file tests are not signatured verified.");
+        `endif
 `ifdef QUESTA
         $stop;  // if this is changed to $finish for Questa, wally-batch.do does not go to the next step to run coverage, and wally.do terminates without allowing GUI debug
 `else
@@ -521,6 +541,10 @@ module testbench;
           end else begin
             $fclose(uncoreMemFile);
             $readmemh(memfilename, dut.uncoregen.uncore.ram.ram.memory.ram.RAM);
+            `ifdef USE_TREK_DV
+              -> trek_start;
+              $display("starting Trek....");
+            `endif
           end
         end
         if (TEST == "embench") $display("Read memfile %s", memfilename);
@@ -570,7 +594,7 @@ module testbench;
   assign SPIIn = 1'b0;
 
   if(P.EXT_MEM_SUPPORTED) begin
-    ram_ahb #(.P(P), .BASE(P.EXT_MEM_BASE), .RANGE(P.EXT_MEM_RANGE))
+    ram_ahb #(.P(P), .RANGE(P.EXT_MEM_RANGE))
     ram (.HCLK, .HRESETn, .HADDR, .HWRITE, .HTRANS, .HWDATA, .HSELRam(HSELEXT),
       .HREADRam(HRDATAEXT), .HREADYRam(HREADYEXT), .HRESPRam(HRESPEXT), .HREADY, .HWSTRB);
   end else begin
@@ -869,12 +893,14 @@ end
 
   end
 
-  always @(dut.core.priv.priv.csr.csri.MIP_REGW[7])   void'(rvvi.net_push("MTimerInterrupt",    dut.core.priv.priv.csr.csri.MIP_REGW[7]));
-  always @(dut.core.priv.priv.csr.csri.MIP_REGW[11])  void'(rvvi.net_push("MExternalInterrupt", dut.core.priv.priv.csr.csri.MIP_REGW[11]));
-  always @(dut.core.priv.priv.csr.csri.MIP_REGW[9])   void'(rvvi.net_push("SExternalInterrupt", dut.core.priv.priv.csr.csri.MIP_REGW[9]));
-  always @(dut.core.priv.priv.csr.csri.MIP_REGW[3])   void'(rvvi.net_push("MSWInterrupt",       dut.core.priv.priv.csr.csri.MIP_REGW[3]));
-  always @(dut.core.priv.priv.csr.csri.MIP_REGW[1])   void'(rvvi.net_push("SSWInterrupt",       dut.core.priv.priv.csr.csri.MIP_REGW[1]));
-  always @(dut.core.priv.priv.csr.csri.MIP_REGW[5])   void'(rvvi.net_push("STimerInterrupt",    dut.core.priv.priv.csr.csri.MIP_REGW[5]));
+  if (P.ZICSR_SUPPORTED) begin
+    always @(dut.core.priv.priv.csr.csri.MIP_REGW[7])   void'(rvvi.net_push("MTimerInterrupt",    dut.core.priv.priv.csr.csri.MIP_REGW[7]));
+    always @(dut.core.priv.priv.csr.csri.MIP_REGW[11])  void'(rvvi.net_push("MExternalInterrupt", dut.core.priv.priv.csr.csri.MIP_REGW[11]));
+    always @(dut.core.priv.priv.csr.csri.MIP_REGW[9])   void'(rvvi.net_push("SExternalInterrupt", dut.core.priv.priv.csr.csri.MIP_REGW[9]));
+    always @(dut.core.priv.priv.csr.csri.MIP_REGW[3])   void'(rvvi.net_push("MSWInterrupt",       dut.core.priv.priv.csr.csri.MIP_REGW[3]));
+    always @(dut.core.priv.priv.csr.csri.MIP_REGW[1])   void'(rvvi.net_push("SSWInterrupt",       dut.core.priv.priv.csr.csri.MIP_REGW[1]));
+    always @(dut.core.priv.priv.csr.csri.MIP_REGW[5])   void'(rvvi.net_push("STimerInterrupt",    dut.core.priv.priv.csr.csri.MIP_REGW[5]));
+  end
 
   final begin
     void'(rvviRefShutdown());
@@ -972,12 +998,6 @@ test_pmp_coverage #(P) pmp_inst(clk);
 `endif
   /* verilator lint_on WIDTHTRUNC */
   /* verilator lint_on WIDTHEXPAND */
-
-`ifdef RVVI_COVERAGE
-    rvviTrace #(.XLEN(P.XLEN), .FLEN(P.FLEN)) rvvi();
-    wallyTracer #(P) wallyTracer(rvvi);
-    wrapper #(P) wrap(clk);
-`endif
 
 endmodule
 

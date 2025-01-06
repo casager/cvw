@@ -118,7 +118,7 @@ if [ "$1" == "--clean" ] || [ "$2" == "--clean" ]; then
     shift
 fi
 
-# Check for clean flag
+# Check for no-buildroot flag
 if [ "$1" == "--no-buildroot" ] || [ "$2" == "--no-buildroot" ]; then
     no_buidroot=true
     shift
@@ -191,6 +191,12 @@ fi
 # Enable newer version of gcc for older distros (required for QEMU/Verilator)
 if [ "$FAMILY" == rhel ]; then
     source /opt/rh/gcc-toolset-13/enable
+elif [ "$FAMILY" == suse ]; then
+    mkdir -p "$RISCV"/gcc-13/bin
+    for f in gcc cpp g++ gcc-ar gcc-nm gcc-ranlib gcov gcov-dump gcov-tool lto-dump; do
+        ln -vsf /usr/bin/$f-13 "$RISCV"/gcc-13/bin/$f
+    done
+    export PATH="$RISCV"/gcc-13/bin:$PATH
 elif (( UBUNTU_VERSION == 20 )); then
     mkdir -p "$RISCV"/gcc-10/bin
     for f in gcc cpp g++ gcc-ar gcc-nm gcc-ranlib gcov gcov-dump gcov-tool lto-dump; do
@@ -263,20 +269,33 @@ if (( RHEL_VERSION == 8 )); then
     fi
 fi
 
+# Mold needed for Verilator
+if (( UBUNTU_VERSION == 20  || DEBIAN_VERSION == 11 )) || [ "$FAMILY" == suse ]; then
+    STATUS="mold"
+    if [ ! -e "$RISCV"/bin/mold ]; then
+        section_header "Installing mold"
+        cd "$RISCV"
+        wget -nv --retry-connrefused $retry_on_host_error --output-document=mold.tar.gz https://github.com/rui314/mold/releases/download/v2.34.1/mold-2.34.1-x86_64-linux.tar.gz
+        tar xz --directory="$RISCV" --strip-components=1 -f mold.tar.gz
+        rm -f mold.tar.gz
+        echo -e "${SUCCESS_COLOR}Mold successfully installed/updated!${ENDC}"
+    else
+        echo -e "${SUCCESS_COLOR}Mold already installed.${ENDC}"
+    fi
+fi
 
 # RISC-V GNU Toolchain (https://github.com/riscv-collab/riscv-gnu-toolchain)
 # The RISC-V GNU Toolchain includes the GNU Compiler Collection (gcc), GNU Binutils, Newlib,
 # and the GNU Debugger Project (gdb). It is a collection of tools used to compile RISC-V programs.
 # To install GCC from source can take hours to compile.
 # This configuration enables multilib to target many flavors of RISC-V.
-# This book is tested with GCC 13.2.0
+# This book is tested with GCC 13.2.0 and 14.2.0.
 section_header "Installing/Updating RISC-V GNU Toolchain"
 STATUS="riscv-gnu-toolchain"
 cd "$RISCV"
-# Temporarily pin riscv-gnu-toolchain to use GCC 13.2.0. GCC 14 does not work with the Q extension.
 if git_check "riscv-gnu-toolchain" "https://github.com/riscv/riscv-gnu-toolchain" "$RISCV/riscv-gnu-toolchain/stamps/build-gcc-newlib-stage2"; then
     cd "$RISCV"/riscv-gnu-toolchain
-    git reset --hard && git clean -f && git checkout master && git pull
+    git reset --hard && git clean -f && git checkout master && git pull && git submodule update
     ./configure --prefix="${RISCV}" --with-multilib-generator="rv32e-ilp32e--;rv32i-ilp32--;rv32im-ilp32--;rv32iac-ilp32--;rv32imac-ilp32--;rv32imafc-ilp32f--;rv32imafdc-ilp32d--;rv64i-lp64--;rv64ic-lp64--;rv64iac-lp64--;rv64imac-lp64--;rv64imafdc-lp64d--;rv64im-lp64--;"
     make -j "${NUM_THREADS}" 2>&1 | logger $STATUS; [ "${PIPESTATUS[0]}" == 0 ]
     if [ "$clean" ]; then
@@ -324,8 +343,7 @@ STATUS="qemu"
 cd "$RISCV"
 if git_check "qemu" "https://github.com/qemu/qemu" "$RISCV/include/qemu-plugin.h"; then
     cd "$RISCV"/qemu
-    git reset --hard && git clean -f && git checkout master && git pull --recurse-submodules -j "${NUM_THREADS}"
-    git submodule update --init --recursive
+    git reset --hard && git clean -f && git checkout master && git pull
     ./configure --target-list=riscv64-softmmu --prefix="$RISCV"
     make -j "${NUM_THREADS}" 2>&1 | logger $STATUS; [ "${PIPESTATUS[0]}" == 0 ]
     make install 2>&1 | logger $STATUS; [ "${PIPESTATUS[0]}" == 0 ]
